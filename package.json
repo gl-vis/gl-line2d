@@ -1,0 +1,31 @@
+{
+  "name": "gl-line2d",
+  "version": "1.0.0",
+  "description": "2D line plots",
+  "main": "line.js",
+  "dependencies": {
+    "gl-buffer": "^2.1.2",
+    "gl-shader": "^4.0.5",
+    "glsl-inverse": "^1.0.0",
+    "glslify": "^2.1.2",
+    "typedarray-pool": "^1.1.0"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "tape test/*.js"
+  },
+  "keywords": [
+    "2d",
+    "line",
+    "plot",
+    "webgl",
+    "gl-vis"
+  ],
+  "author": "Mikola Lysenko",
+  "license": "MIT",
+  "browserify": {
+    "transform": [
+      "glslify"
+    ]
+  }
+}
