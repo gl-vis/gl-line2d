@@ -5,12 +5,27 @@ module.exports = createLinePlot
 var createShader = require('gl-shader')
 var createBuffer = require('gl-buffer')
 var pool = require('typedarray-pool')
+var bsearch = require('binary-search-bounds')
 
 var SHADERS = require('./lib/shaders')
+var snapLine = require('./lib/sort-line')
 
-function GLLine2D(plot, lineBuffer, boxBuffer, lineShader) {
+
+function compareScale(a, b) {
+  return a.pixelSize - b
+}
+
+function LODLine(pixelSize, buffer, idBuffer, count) {
+  this.pixelSize = pixelSize
+  this.buffer    = buffer
+  this.idBuffer  = idBuffer
+  this.count     = count
+}
+
+
+function GLLine2D(plot, boxBuffer, lineShader) {
   this.plot       = plot
-  this.lineBuffer = lineBuffer
+  this.lodBuffer  = []
   this.boxBuffer  = boxBuffer
   this.lineShader = lineShader
 
@@ -59,6 +74,8 @@ return function() {
   var screenX = viewBox[2] - viewBox[0]
   var screenY = viewBox[3] - viewBox[1]
 
+  var pixelSize   = Math.max(dataX / screenX, dataY / screenY)
+
   MATRIX[0] = 2.0 * boundX / dataX
   MATRIX[4] = 2.0 * boundY / dataY
   MATRIX[6] = 2.0 * (bounds[0] - dataBox[0]) / dataX - 1.0
@@ -76,13 +93,17 @@ return function() {
   uniforms.screenShape = SCREEN_SHAPE
 
   var attributes = shader.attributes
-  buffer.bind()
-  attributes.a.pointer(gl.FLOAT, false, 16, 0)
-  attributes.b.pointer(gl.FLOAT, false, 16, 8)
   boxBuffer.bind()
   attributes.t.pointer(gl.UNSIGNED_BYTE)
 
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4*(numPoints-1))
+  var lod = this.lodBuffer[Math.min(Math.max(bsearch.le(
+    this.lodBuffer, pixelSize, compareScale), 0), this.lodBuffer.length-1)]
+
+  lod.buffer.bind()
+  attributes.a.pointer(gl.FLOAT, false, 16, 0)
+  attributes.b.pointer(gl.FLOAT, false, 16, 8)
+
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, lod.count)
 }
 })()
 
@@ -104,6 +125,10 @@ function deepCopy(arr) {
 
 proto.update = function(options) {
   options = options || {}
+
+  var gl = this.plot.gl
+
+  debugger
 
   this.color = (options.color || [0,0,1,1]).slice()
   this.width = +(options.width || 1)
@@ -134,63 +159,118 @@ proto.update = function(options) {
   }
 
   this.data = data
-  this.numPoints = data.length>>>1
+  var numPoints = this.numPoints = data.length>>>1
 
-  //Rescale points into line buffer and upload
-  var plotData = pool.mallocFloat32(16*(this.numPoints-1))
-  var boxData  = pool.mallocUint8(4*(this.numPoints-1))
-  var ptr = 0
-  var bptr = 0
-  var ax = (data[0] - bounds[0]) / (bounds[2] - bounds[0])
-  var ay = (data[1] - bounds[1]) / (bounds[3] - bounds[1])
-  for(var i=2; i<data.length; i+=2) {
-    var bx = (data[i] - bounds[0])   / (bounds[2] - bounds[0])
-    var by = (data[i+1] - bounds[1]) / (bounds[3] - bounds[1])
-    plotData[ptr++] = ax
-    plotData[ptr++] = ay
-    plotData[ptr++] = bx
-    plotData[ptr++] = by
+  if(numPoints === 0) {
+    return
+  }
 
-    plotData[ptr++] = ax
-    plotData[ptr++] = ay
-    plotData[ptr++] = bx
-    plotData[ptr++] = by
+  //Initialize box data
+  var boxData  = pool.mallocUint8(4*(numPoints-1))
+  for(var i=0; i<numPoints-1; ++i) {
+    boxData[4*i]   = 1
+    boxData[4*i+1] = 0
+    boxData[4*i+2] = 0
+    boxData[4*i+3] = 1
+  }
+  this.boxBuffer.update(boxData)
+  pool.free(boxData)
 
-    plotData[ptr++] = bx
-    plotData[ptr++] = by
-    plotData[ptr++] = ax
-    plotData[ptr++] = ay
+  //Initialize point data
+  var outData   = pool.mallocFloat32(4*(numPoints-1))
+  var outIds    = pool.mallocUint32(numPoints - 1)
+  var plotData  = pool.mallocFloat32(16*(numPoints-1))
+  var lastPtr   = 1
+  var scale     = Math.min(bounds[2] - bounds[0], bounds[3] - bounds[1])
+  var lodPtr    = 0
+  while(true) {
+    scale = Math.sqrt(scale)
+    var nextPtr = snapLine(data, scale, outData, outIds, bounds)
+    if(nextPtr === lastPtr) {
+      continue
+    }
 
-    plotData[ptr++] = bx
-    plotData[ptr++] = by
-    plotData[ptr++] = ax
-    plotData[ptr++] = ay
+    var ax = outData[0]
+    var ay = outData[1]
+    var ptr = 0
+    for(var i=1; i<nextPtr; ++i) {
+      var bx = outData[2*i]
+      var by = outData[2*i+1]
 
-    ax = bx
-    ay = by
+      plotData[ptr++] = ax
+      plotData[ptr++] = ay
+      plotData[ptr++] = bx
+      plotData[ptr++] = by
 
-    boxData[bptr++] = 1
-    boxData[bptr++] = 0
-    boxData[bptr++] = 0
-    boxData[bptr++] = 1
+      plotData[ptr++] = ax
+      plotData[ptr++] = ay
+      plotData[ptr++] = bx
+      plotData[ptr++] = by
+
+      plotData[ptr++] = bx
+      plotData[ptr++] = by
+      plotData[ptr++] = ax
+      plotData[ptr++] = ay
+
+      plotData[ptr++] = bx
+      plotData[ptr++] = by
+      plotData[ptr++] = ax
+      plotData[ptr++] = ay
+
+      ax = bx
+      ay = by
+    }
+
+    var lod = this.lodBuffer[lodPtr]
+    if(lod) {
+      lod.scale = scale
+      lod.buffer.update(plotData.subarray(0, ptr))
+      lod.idBuffer.update(outIds.subarray(0, nextPtr))
+      lod.count = 4*(nextPtr-1)
+    } else {
+      this.lodBuffer[lodPtr] = new LODLine(
+        scale,
+        createBuffer(gl, plotData.subarray(0, ptr)),
+        createBuffer(gl, outIds.subarray(0, nextPtr)),
+        4*(nextPtr-1))
+    }
+    lodPtr += 1
+
+    if(nextPtr === numPoints) {
+      break
+    }
+
+    if(scale < 1e-8) {
+      break
+    }
   }
   pool.free(plotData)
-  pool.free(boxData)
-  this.lineBuffer.update(plotData)
-  this.boxBuffer.update(boxData)
+  pool.free(outIds)
+  pool.free(outData)
+
+  //Clear out lodBuffer
+  while(lodPtr < this.lodBuffer.length) {
+    var lod = this.lodBuffer[lodPtr++]
+    lod.buffer.dispose()
+    lod.idBuffer.dispose()
+  }
+  this.lodBuffer.length = lodPtr
 }
 
 proto.dispose = function() {
-  this.lineBuffer.dispose()
+  this.boxBuffer.dispose()
   this.lineShader.dispose()
+  for(var i=0; i<this.lodBuffer.length; ++i) {
+    this.lodBuffer[i].buffer.dispose()
+    this.lodBuffer[i].idBuffer.dispose()
+  }
 }
 
 function createLinePlot(plot, options) {
   var gl = plot.gl
-  var lineBuffer = createBuffer(gl)
   var boxBuffer  = createBuffer(gl)
   var lineShader = createShader(gl, SHADERS.lineVertex, SHADERS.lineFragment)
-  var linePlot = new GLLine2D(plot, lineBuffer, boxBuffer, lineShader)
+  var linePlot = new GLLine2D(plot, boxBuffer, lineShader)
   linePlot.update(options)
   return linePlot
 }
