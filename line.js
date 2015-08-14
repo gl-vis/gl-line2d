@@ -20,10 +20,13 @@ function compareScale(a, b) {
   return b - a.pixelSize
 }
 
-function GLLine2D(plot, lineBuffer, lineShader) {
+function GLLine2D(plot, lineBuffer, pickBuffer, lineShader, mitreShader, pickShader) {
   this.plot       = plot
   this.lineBuffer = lineBuffer
+  this.pickBuffer = pickBuffer
   this.lineShader = lineShader
+  this.mitreShader = mitreShader
+  this.pickShader  = pickShader
 
   this.bounds     = [Infinity, Infinity, -Infinity, -Infinity]
 
@@ -40,6 +43,7 @@ function GLLine2D(plot, lineBuffer, lineShader) {
   this.data       = null
   this.numPoints  = 0
 
+  this.pickOffset = 0
 
   this.lodBuffer = []
 }
@@ -99,17 +103,107 @@ return function() {
   attributes.d.pointer(gl.FLOAT, false, 16, 8)
 
   gl.drawArrays(gl.TRIANGLES, lod.offset, lod.count)
+
+  //Draw mitres
+  if(width > 2) {
+    var mshader = this.mitreShader
+    mshader.bind()
+
+    var muniforms = mshader.uniforms
+    muniforms.matrix = MATRIX
+    muniforms.color  = color
+    muniforms.screenShape = SCREEN_SHAPE
+    muniforms.radius = width * pixelRatio
+
+    mshader.attributes.p.pointer(gl.FLOAT, false, 48, 0)
+    gl.drawArrays(gl.POINTS, lod.offset, (lod.count/3)|0)
+  }
 }
 })()
 
 proto.drawPick = (function() {
-return function(pickOffset) {
-  return pickOffset
-}
+  var MATRIX = [1, 0, 0,
+                0, 1, 0,
+                0, 0, 1]
+  var SCREEN_SHAPE = [0,0]
+  var PICK_OFFSET = [0,0,0,0]
+  return function(pickOffset) {
+    var plot      = this.plot
+    var shader    = this.pickShader
+    var buffer    = this.lineBuffer
+    var pickBuffer= this.pickBuffer
+    var width     = this.width
+    var numPoints = this.numPoints
+    var bounds    = this.bounds
+
+    var gl        = plot.gl
+    var viewBox   = plot.viewBox
+    var dataBox   = plot.dataBox
+    var pixelRatio = plot.pixelRatio
+
+    var boundX  = bounds[2] - bounds[0]
+    var boundY  = bounds[3] - bounds[1]
+    var dataX   = dataBox[2] - dataBox[0]
+    var dataY   = dataBox[3] - dataBox[1]
+    var screenX = viewBox[2] - viewBox[0]
+    var screenY = viewBox[3] - viewBox[1]
+
+    var pixelSize   = Math.max(dataX / screenX, dataY / screenY) / pixelRatio
+
+    this.pickOffset = pickOffset
+
+    MATRIX[0] = 2.0 * boundX / dataX
+    MATRIX[4] = 2.0 * boundY / dataY
+    MATRIX[6] = 2.0 * (bounds[0] - dataBox[0]) / dataX - 1.0
+    MATRIX[7] = 2.0 * (bounds[1] - dataBox[1]) / dataY - 1.0
+
+    SCREEN_SHAPE[0] = screenX
+    SCREEN_SHAPE[1] = screenY
+
+    PICK_OFFSET[0] =  pickOffset       & 0xff
+    PICK_OFFSET[1] = (pickOffset>>>8)  & 0xff
+    PICK_OFFSET[2] = (pickOffset>>>16) & 0xff
+    PICK_OFFSET[3] =  pickOffset>>>24
+
+    shader.bind()
+
+    var uniforms = shader.uniforms
+    uniforms.matrix      = MATRIX
+    uniforms.width       = width * pixelRatio
+    uniforms.pickOffset  = PICK_OFFSET
+    uniforms.screenShape = SCREEN_SHAPE
+
+    var attributes = shader.attributes
+    var lod = this.lodBuffer[Math.min(Math.max(bsearch.le(
+      this.lodBuffer, pixelSize, compareScale), 0), this.lodBuffer.length-1)]
+
+    buffer.bind()
+    attributes.a.pointer(gl.FLOAT, false, 16, 0)
+    attributes.d.pointer(gl.FLOAT, false, 16, 8)
+
+    pickBuffer.bind()
+    attributes.pick0.pointer(gl.UNSIGNED_BYTE, false, 8, 0)
+    attributes.pick1.pointer(gl.UNSIGNED_BYTE, false, 8, 4)
+
+    gl.drawArrays(gl.TRIANGLES, lod.offset, lod.count)
+
+    return pickOffset+numPoints
+  }
 })()
 
 proto.pick = function(x, y, value) {
-  return null
+  var pickOffset = this.pickOffset
+  var pointCount = this.numPoints
+  if(value < pickOffset || value >= pickOffset + pointCount) {
+    return null
+  }
+  var pointId = value - pickOffset
+  var points = this.data
+  return {
+    object:    this,
+    pointId:   pointId,
+    dataCoord: [ points[2*pointId], points[2*pointId+1] ]
+  }
 }
 
 function deepCopy(arr) {
@@ -156,8 +250,10 @@ proto.update = function(options) {
 
   //Generate line lods
   var lineData    = pool.mallocFloat32(24*(numPoints-1))
+  var pickData    = pool.mallocUint32(12*(numPoints-1))
   var lineLOD     = this.lodBuffer
   var lineDataPtr = lineData.length
+  var pickDataPtr = pickData.length
   var ptr         = numPoints
   lineLOD.length = 0
   for(var i=0; i<lod.length; ++i) {
@@ -176,35 +272,52 @@ proto.update = function(options) {
           var dx = bx - ax
           var dy = by - ay
 
-          lineData[--lineDataPtr] = -dy
-          lineData[--lineDataPtr] = -dx
-          lineData[--lineDataPtr] = ay
-          lineData[--lineDataPtr] = ax
-
-          lineData[--lineDataPtr] = dy
-          lineData[--lineDataPtr] = dx
-          lineData[--lineDataPtr] = by
-          lineData[--lineDataPtr] = bx
-
-          lineData[--lineDataPtr] = -dy
-          lineData[--lineDataPtr] = -dx
-          lineData[--lineDataPtr] = by
-          lineData[--lineDataPtr] = bx
-
-          lineData[--lineDataPtr] = dy
-          lineData[--lineDataPtr] = dx
-          lineData[--lineDataPtr] = by
-          lineData[--lineDataPtr] = bx
+          var akey0 = id     | (1<<24)
+          var akey1 = (id-1)
+          var bkey0 = id
+          var bkey1 = (id-1) | (1<<24)
 
           lineData[--lineDataPtr] = -dy
           lineData[--lineDataPtr] = -dx
           lineData[--lineDataPtr] = ay
           lineData[--lineDataPtr] = ax
+          pickData[--pickDataPtr] = akey0
+          pickData[--pickDataPtr] = akey1
+
+          lineData[--lineDataPtr] = dy
+          lineData[--lineDataPtr] = dx
+          lineData[--lineDataPtr] = by
+          lineData[--lineDataPtr] = bx
+          pickData[--pickDataPtr] = bkey0
+          pickData[--pickDataPtr] = bkey1
+
+          lineData[--lineDataPtr] = -dy
+          lineData[--lineDataPtr] = -dx
+          lineData[--lineDataPtr] = by
+          lineData[--lineDataPtr] = bx
+          pickData[--pickDataPtr] = bkey0
+          pickData[--pickDataPtr] = bkey1
+
+          lineData[--lineDataPtr] = dy
+          lineData[--lineDataPtr] = dx
+          lineData[--lineDataPtr] = by
+          lineData[--lineDataPtr] = bx
+          pickData[--pickDataPtr] = bkey0
+          pickData[--pickDataPtr] = bkey1
+
+          lineData[--lineDataPtr] = -dy
+          lineData[--lineDataPtr] = -dx
+          lineData[--lineDataPtr] = ay
+          lineData[--lineDataPtr] = ax
+          pickData[--pickDataPtr] = akey0
+          pickData[--pickDataPtr] = akey1
 
           lineData[--lineDataPtr] = dy
           lineData[--lineDataPtr] = dx
           lineData[--lineDataPtr] = ay
           lineData[--lineDataPtr] = ax
+          pickData[--pickDataPtr] = akey0
+          pickData[--pickDataPtr] = akey1
         }
       }
       if(id < numPoints-1) {
@@ -216,35 +329,53 @@ proto.update = function(options) {
           var dx = bx - ax
           var dy = by - ay
 
-          lineData[--lineDataPtr] = dy
-          lineData[--lineDataPtr] = dx
-          lineData[--lineDataPtr] = by
-          lineData[--lineDataPtr] = bx
-
-          lineData[--lineDataPtr] = -dy
-          lineData[--lineDataPtr] = -dx
-          lineData[--lineDataPtr] = ay
-          lineData[--lineDataPtr] = ax
-
-          lineData[--lineDataPtr] = -dy
-          lineData[--lineDataPtr] = -dx
-          lineData[--lineDataPtr] = by
-          lineData[--lineDataPtr] = bx
-
-          lineData[--lineDataPtr] = -dy
-          lineData[--lineDataPtr] = -dx
-          lineData[--lineDataPtr] = ay
-          lineData[--lineDataPtr] = ax
+          var akey0 = id     | (1<<24)
+          var akey1 = (id+1)
+          var bkey0 = id
+          var bkey1 = (id+1) | (1<<24)
 
           lineData[--lineDataPtr] = dy
           lineData[--lineDataPtr] = dx
           lineData[--lineDataPtr] = by
           lineData[--lineDataPtr] = bx
+          pickData[--pickDataPtr] = bkey0
+          pickData[--pickDataPtr] = bkey1
+
+          lineData[--lineDataPtr] = -dy
+          lineData[--lineDataPtr] = -dx
+          lineData[--lineDataPtr] = by
+          lineData[--lineDataPtr] = bx
+          pickData[--pickDataPtr] = bkey0
+          pickData[--pickDataPtr] = bkey1
+
+          lineData[--lineDataPtr] = -dy
+          lineData[--lineDataPtr] = -dx
+          lineData[--lineDataPtr] = ay
+          lineData[--lineDataPtr] = ax
+          pickData[--pickDataPtr] = akey0
+          pickData[--pickDataPtr] = akey1
+
+
+          lineData[--lineDataPtr] = -dy
+          lineData[--lineDataPtr] = -dx
+          lineData[--lineDataPtr] = ay
+          lineData[--lineDataPtr] = ax
+          pickData[--pickDataPtr] = akey0
+          pickData[--pickDataPtr] = akey1
 
           lineData[--lineDataPtr] = dy
           lineData[--lineDataPtr] = dx
           lineData[--lineDataPtr] = ay
           lineData[--lineDataPtr] = ax
+          pickData[--pickDataPtr] = akey0
+          pickData[--pickDataPtr] = akey1
+
+          lineData[--lineDataPtr] = dy
+          lineData[--lineDataPtr] = dx
+          lineData[--lineDataPtr] = by
+          lineData[--lineDataPtr] = bx
+          pickData[--pickDataPtr] = bkey0
+          pickData[--pickDataPtr] = bkey1
         }
       }
     }
@@ -257,6 +388,7 @@ proto.update = function(options) {
   }
 
   this.lineBuffer.update(lineData)
+  this.pickBuffer.update(pickData)
 
   pool.free(lineData)
   pool.free(outData)
@@ -271,8 +403,17 @@ proto.dispose = function() {
 function createLinePlot(plot, options) {
   var gl = plot.gl
   var lineBuffer  = createBuffer(gl)
-  var lineShader = createShader(gl, SHADERS.lineVertex, SHADERS.lineFragment)
-  var linePlot = new GLLine2D(plot, lineBuffer, lineShader)
+  var pickBuffer  = createBuffer(gl)
+  var lineShader  = createShader(gl, SHADERS.lineVertex, SHADERS.lineFragment)
+  var mitreShader = createShader(gl, SHADERS.mitreVertex, SHADERS.mitreFragment)
+  var pickShader  = createShader(gl, SHADERS.pickVertex, SHADERS.pickFragment)
+  var linePlot    = new GLLine2D(
+    plot,
+    lineBuffer,
+    pickBuffer,
+    lineShader,
+    mitreShader,
+    pickShader)
   linePlot.update(options)
   return linePlot
 }
