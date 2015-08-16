@@ -20,12 +20,13 @@ function compareScale(a, b) {
   return b - a.pixelSize
 }
 
-function GLLine2D(plot, lineBuffer, pickBuffer, lineShader, mitreShader, pickShader) {
+function GLLine2D(plot, lineBuffer, pickBuffer, lineShader, mitreShader, fillShader, pickShader) {
   this.plot       = plot
   this.lineBuffer = lineBuffer
   this.pickBuffer = pickBuffer
   this.lineShader = lineShader
   this.mitreShader = mitreShader
+  this.fillShader  = fillShader
   this.pickShader  = pickShader
 
   this.bounds     = [Infinity, Infinity, -Infinity, -Infinity]
@@ -55,10 +56,12 @@ var MATRIX = [1, 0, 0,
               0, 1, 0,
               0, 0, 1]
 var SCREEN_SHAPE = [0,0]
+var PX_AXIS = [1,0]
+var NX_AXIS = [-1,0]
+var PY_AXIS = [0,1]
+var NY_AXIS = [0,-1]
 return function() {
   var plot      = this.plot
-  var shader    = this.lineShader
-  var buffer    = this.lineBuffer
   var color     = this.color
   var width     = this.width
   var numPoints = this.numPoints
@@ -86,6 +89,65 @@ return function() {
   SCREEN_SHAPE[0] = screenX
   SCREEN_SHAPE[1] = screenY
 
+  var lod = this.lodBuffer[Math.min(Math.max(bsearch.le(
+    this.lodBuffer, pixelSize, compareScale), 0), this.lodBuffer.length-1)]
+
+
+  var buffer    = this.lineBuffer
+  buffer.bind()
+
+  var fill = this.fill
+
+  if(fill[0] || fill[1] || fill[2] || fill[3]) {
+
+    var fillShader = this.fillShader
+    fillShader.bind()
+
+    var fillUniforms = fillShader.uniforms
+    fillUniforms.matrix = MATRIX
+    fillUniforms.depth = plot.nextDepthValue()
+
+    var fillAttributes = fillShader.attributes
+    fillAttributes.a.pointer(gl.FLOAT, false, 16, 0)
+    fillAttributes.d.pointer(gl.FLOAT, false, 16, 8)
+
+    gl.depthMask(true)
+    gl.enable(gl.DEPTH_TEST)
+
+    var fillColor = this.fillColor
+    if(fill[0]) {
+      fillUniforms.color        = fillColor[0]
+      fillUniforms.projectAxis  = NX_AXIS
+      fillUniforms.projectValue = 1
+      gl.drawArrays(gl.TRIANGLES, lod.offset, lod.count)
+    }
+
+    if(fill[1]) {
+      fillUniforms.color        = fillColor[1]
+      fillUniforms.projectAxis  = NY_AXIS
+      fillUniforms.projectValue = 1
+      gl.drawArrays(gl.TRIANGLES, lod.offset, lod.count)
+    }
+
+    if(fill[2]) {
+      fillUniforms.color        = fillColor[2]
+      fillUniforms.projectAxis  = PX_AXIS
+      fillUniforms.projectValue = 1
+      gl.drawArrays(gl.TRIANGLES, lod.offset, lod.count)
+    }
+
+    if(fill[3]) {
+      fillUniforms.color        = fillColor[3]
+      fillUniforms.projectAxis  = PY_AXIS
+      fillUniforms.projectValue = 1
+      gl.drawArrays(gl.TRIANGLES, lod.offset, lod.count)
+    }
+
+    gl.depthMask(false)
+    gl.disable(gl.DEPTH_TEST)
+  }
+
+  var shader    = this.lineShader
   shader.bind()
 
   var uniforms = shader.uniforms
@@ -95,10 +157,6 @@ return function() {
   uniforms.screenShape = SCREEN_SHAPE
 
   var attributes = shader.attributes
-  var lod = this.lodBuffer[Math.min(Math.max(bsearch.le(
-    this.lodBuffer, pixelSize, compareScale), 0), this.lodBuffer.length-1)]
-
-  buffer.bind()
   attributes.a.pointer(gl.FLOAT, false, 16, 0)
   attributes.d.pointer(gl.FLOAT, false, 16, 8)
 
@@ -406,6 +464,7 @@ function createLinePlot(plot, options) {
   var pickBuffer  = createBuffer(gl)
   var lineShader  = createShader(gl, SHADERS.lineVertex, SHADERS.lineFragment)
   var mitreShader = createShader(gl, SHADERS.mitreVertex, SHADERS.mitreFragment)
+  var fillShader  = createShader(gl, SHADERS.fillVertex, SHADERS.lineFragment)
   var pickShader  = createShader(gl, SHADERS.pickVertex, SHADERS.pickFragment)
   var linePlot    = new GLLine2D(
     plot,
@@ -413,6 +472,7 @@ function createLinePlot(plot, options) {
     pickBuffer,
     lineShader,
     mitreShader,
+    fillShader,
     pickShader)
   linePlot.update(options)
   return linePlot
