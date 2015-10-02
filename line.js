@@ -6,21 +6,21 @@ var createShader = require('gl-shader')
 var createBuffer = require('gl-buffer')
 var pool = require('typedarray-pool')
 var bsearch = require('binary-search-bounds')
-var snapPoints = require('snap-points-2d')
 
 var SHADERS = require('./lib/shaders')
-
-function LODEntry(pixelSize, offset, count) {
-  this.pixelSize = pixelSize
-  this.offset = offset
-  this.count = count
-}
-
 function compareScale(a, b) {
   return b - a.pixelSize
 }
 
-function GLLine2D(plot, lineBuffer, pickBuffer, lineShader, mitreShader, fillShader, pickShader) {
+function GLLine2D(
+  plot,
+  lineBuffer,
+  pickBuffer,
+  lineShader,
+  mitreShader,
+  fillShader,
+  pickShader) {
+
   this.plot       = plot
   this.lineBuffer = lineBuffer
   this.pickBuffer = pickBuffer
@@ -43,6 +43,7 @@ function GLLine2D(plot, lineBuffer, pickBuffer, lineShader, mitreShader, fillSha
 
   this.data       = null
   this.numPoints  = 0
+  this.vertCount  = 0
 
   this.pickOffset = 0
 
@@ -66,6 +67,7 @@ return function() {
   var width     = this.width
   var numPoints = this.numPoints
   var bounds    = this.bounds
+  var count     = this.vertCount
 
   var gl        = plot.gl
   var viewBox   = plot.viewBox
@@ -88,10 +90,6 @@ return function() {
 
   SCREEN_SHAPE[0] = screenX
   SCREEN_SHAPE[1] = screenY
-
-  var lod = this.lodBuffer[Math.min(Math.max(bsearch.le(
-    this.lodBuffer, pixelSize, compareScale), 0), this.lodBuffer.length-1)]
-
 
   var buffer    = this.lineBuffer
   buffer.bind()
@@ -119,28 +117,28 @@ return function() {
       fillUniforms.color        = fillColor[0]
       fillUniforms.projectAxis  = NX_AXIS
       fillUniforms.projectValue = 1
-      gl.drawArrays(gl.TRIANGLES, lod.offset, lod.count)
+      gl.drawArrays(gl.TRIANGLES, 0, count)
     }
 
     if(fill[1]) {
       fillUniforms.color        = fillColor[1]
       fillUniforms.projectAxis  = NY_AXIS
       fillUniforms.projectValue = 1
-      gl.drawArrays(gl.TRIANGLES, lod.offset, lod.count)
+      gl.drawArrays(gl.TRIANGLES, 0, count)
     }
 
     if(fill[2]) {
       fillUniforms.color        = fillColor[2]
       fillUniforms.projectAxis  = PX_AXIS
       fillUniforms.projectValue = 1
-      gl.drawArrays(gl.TRIANGLES, lod.offset, lod.count)
+      gl.drawArrays(gl.TRIANGLES, 0, count)
     }
 
     if(fill[3]) {
       fillUniforms.color        = fillColor[3]
       fillUniforms.projectAxis  = PY_AXIS
       fillUniforms.projectValue = 1
-      gl.drawArrays(gl.TRIANGLES, lod.offset, lod.count)
+      gl.drawArrays(gl.TRIANGLES, 0, count)
     }
 
     gl.depthMask(false)
@@ -160,7 +158,7 @@ return function() {
   attributes.a.pointer(gl.FLOAT, false, 16, 0)
   attributes.d.pointer(gl.FLOAT, false, 16, 8)
 
-  gl.drawArrays(gl.TRIANGLES, lod.offset, lod.count)
+  gl.drawArrays(gl.TRIANGLES, 0, count)
 
   //Draw mitres
   if(width > 2) {
@@ -174,7 +172,7 @@ return function() {
     muniforms.radius = width * pixelRatio
 
     mshader.attributes.p.pointer(gl.FLOAT, false, 48, 0)
-    gl.drawArrays(gl.POINTS, lod.offset, (lod.count/3)|0)
+    gl.drawArrays(gl.POINTS, 0, (count/3)|0)
   }
 }
 })()
@@ -193,6 +191,8 @@ proto.drawPick = (function() {
     var width     = this.width
     var numPoints = this.numPoints
     var bounds    = this.bounds
+    var count     = this.vertCount
+
 
     var gl        = plot.gl
     var viewBox   = plot.viewBox
@@ -232,8 +232,6 @@ proto.drawPick = (function() {
     uniforms.screenShape = SCREEN_SHAPE
 
     var attributes = shader.attributes
-    var lod = this.lodBuffer[Math.min(Math.max(bsearch.le(
-      this.lodBuffer, pixelSize, compareScale), 0), this.lodBuffer.length-1)]
 
     buffer.bind()
     attributes.a.pointer(gl.FLOAT, false, 16, 0)
@@ -243,7 +241,7 @@ proto.drawPick = (function() {
     attributes.pick0.pointer(gl.UNSIGNED_BYTE, false, 8, 0)
     attributes.pick1.pointer(gl.UNSIGNED_BYTE, false, 8, 4)
 
-    gl.drawArrays(gl.TRIANGLES, lod.offset, lod.count)
+    gl.drawArrays(gl.TRIANGLES, 0, count)
 
     return pickOffset+numPoints
   }
@@ -292,13 +290,6 @@ proto.update = function(options) {
     return
   }
 
-  //Initialize point data and compute bounds
-  var pointData = pool.mallocFloat32(2*numPoints)
-  var outData   = pool.mallocFloat32(2*numPoints)
-  var outIds    = pool.mallocUint32(numPoints)
-  pointData.set(data)
-  var lod       = snapPoints(pointData, outData, outIds, this.bounds)
-  pool.free(pointData)
 
   //Compute inverse permutation
   var invIds    = pool.mallocUint32(numPoints)
@@ -306,143 +297,73 @@ proto.update = function(options) {
     invIds[outIds[i]] = i
   }
 
-  //Generate line lods
+  //Generate line data
   var lineData    = pool.mallocFloat32(24*(numPoints-1))
   var pickData    = pool.mallocUint32(12*(numPoints-1))
-  var lineLOD     = this.lodBuffer
   var lineDataPtr = lineData.length
   var pickDataPtr = pickData.length
-  var ptr         = numPoints
-  lineLOD.length = 0
-  for(var i=0; i<lod.length; ++i) {
-    var level = lod[i]
-    var levelStart = level.offset
-    while(ptr > levelStart) {
-      var id = outIds[--ptr]
-      var ax = outData[2*ptr]
-      var ay = outData[2*ptr+1]
-      if(id > 0) {
-        var next = invIds[id - 1]
-        if(next < ptr) {
-          var bx = outData[2*next]
-          var by = outData[2*next+1]
+  var ptr = numPoints
 
-          var dx = bx - ax
-          var dy = by - ay
+  this.vertCount = 6 * (numPoints - 1)
 
-          var akey0 = id     | (1<<24)
-          var akey1 = (id-1)
-          var bkey0 = id
-          var bkey1 = (id-1) | (1<<24)
+  while(ptr > 1) {
+    var id = --ptr
+    var ax = data[2*ptr]
+    var ay = data[2*ptr+1]
+    
+    var next = id-1
+    var bx = outData[2*next]
+    var by = outData[2*next+1]
 
-          lineData[--lineDataPtr] = -dy
-          lineData[--lineDataPtr] = -dx
-          lineData[--lineDataPtr] = ay
-          lineData[--lineDataPtr] = ax
-          pickData[--pickDataPtr] = akey0
-          pickData[--pickDataPtr] = akey1
+    var dx = bx - ax
+    var dy = by - ay
 
-          lineData[--lineDataPtr] = dy
-          lineData[--lineDataPtr] = dx
-          lineData[--lineDataPtr] = by
-          lineData[--lineDataPtr] = bx
-          pickData[--pickDataPtr] = bkey0
-          pickData[--pickDataPtr] = bkey1
+    var akey0 = id     | (1<<24)
+    var akey1 = (id-1)
+    var bkey0 = id
+    var bkey1 = (id-1) | (1<<24)
 
-          lineData[--lineDataPtr] = -dy
-          lineData[--lineDataPtr] = -dx
-          lineData[--lineDataPtr] = by
-          lineData[--lineDataPtr] = bx
-          pickData[--pickDataPtr] = bkey0
-          pickData[--pickDataPtr] = bkey1
+    lineData[--lineDataPtr] = -dy
+    lineData[--lineDataPtr] = -dx
+    lineData[--lineDataPtr] = ay
+    lineData[--lineDataPtr] = ax
+    pickData[--pickDataPtr] = akey0
+    pickData[--pickDataPtr] = akey1
 
-          lineData[--lineDataPtr] = dy
-          lineData[--lineDataPtr] = dx
-          lineData[--lineDataPtr] = by
-          lineData[--lineDataPtr] = bx
-          pickData[--pickDataPtr] = bkey0
-          pickData[--pickDataPtr] = bkey1
+    lineData[--lineDataPtr] = dy
+    lineData[--lineDataPtr] = dx
+    lineData[--lineDataPtr] = by
+    lineData[--lineDataPtr] = bx
+    pickData[--pickDataPtr] = bkey0
+    pickData[--pickDataPtr] = bkey1
 
-          lineData[--lineDataPtr] = -dy
-          lineData[--lineDataPtr] = -dx
-          lineData[--lineDataPtr] = ay
-          lineData[--lineDataPtr] = ax
-          pickData[--pickDataPtr] = akey0
-          pickData[--pickDataPtr] = akey1
+    lineData[--lineDataPtr] = -dy
+    lineData[--lineDataPtr] = -dx
+    lineData[--lineDataPtr] = by
+    lineData[--lineDataPtr] = bx
+    pickData[--pickDataPtr] = bkey0
+    pickData[--pickDataPtr] = bkey1
 
-          lineData[--lineDataPtr] = dy
-          lineData[--lineDataPtr] = dx
-          lineData[--lineDataPtr] = ay
-          lineData[--lineDataPtr] = ax
-          pickData[--pickDataPtr] = akey0
-          pickData[--pickDataPtr] = akey1
-        }
-      }
-      if(id < numPoints-1) {
-        var next = invIds[id + 1]
-        if(next < ptr) {
-          var bx = outData[2*next]
-          var by = outData[2*next+1]
+    lineData[--lineDataPtr] = dy
+    lineData[--lineDataPtr] = dx
+    lineData[--lineDataPtr] = by
+    lineData[--lineDataPtr] = bx
+    pickData[--pickDataPtr] = bkey0
+    pickData[--pickDataPtr] = bkey1
 
-          var dx = bx - ax
-          var dy = by - ay
+    lineData[--lineDataPtr] = -dy
+    lineData[--lineDataPtr] = -dx
+    lineData[--lineDataPtr] = ay
+    lineData[--lineDataPtr] = ax
+    pickData[--pickDataPtr] = akey0
+    pickData[--pickDataPtr] = akey1
 
-          var akey0 = id     | (1<<24)
-          var akey1 = (id+1)
-          var bkey0 = id
-          var bkey1 = (id+1) | (1<<24)
-
-          lineData[--lineDataPtr] = dy
-          lineData[--lineDataPtr] = dx
-          lineData[--lineDataPtr] = by
-          lineData[--lineDataPtr] = bx
-          pickData[--pickDataPtr] = bkey0
-          pickData[--pickDataPtr] = bkey1
-
-          lineData[--lineDataPtr] = -dy
-          lineData[--lineDataPtr] = -dx
-          lineData[--lineDataPtr] = by
-          lineData[--lineDataPtr] = bx
-          pickData[--pickDataPtr] = bkey0
-          pickData[--pickDataPtr] = bkey1
-
-          lineData[--lineDataPtr] = -dy
-          lineData[--lineDataPtr] = -dx
-          lineData[--lineDataPtr] = ay
-          lineData[--lineDataPtr] = ax
-          pickData[--pickDataPtr] = akey0
-          pickData[--pickDataPtr] = akey1
-
-
-          lineData[--lineDataPtr] = -dy
-          lineData[--lineDataPtr] = -dx
-          lineData[--lineDataPtr] = ay
-          lineData[--lineDataPtr] = ax
-          pickData[--pickDataPtr] = akey0
-          pickData[--pickDataPtr] = akey1
-
-          lineData[--lineDataPtr] = dy
-          lineData[--lineDataPtr] = dx
-          lineData[--lineDataPtr] = ay
-          lineData[--lineDataPtr] = ax
-          pickData[--pickDataPtr] = akey0
-          pickData[--pickDataPtr] = akey1
-
-          lineData[--lineDataPtr] = dy
-          lineData[--lineDataPtr] = dx
-          lineData[--lineDataPtr] = by
-          lineData[--lineDataPtr] = bx
-          pickData[--pickDataPtr] = bkey0
-          pickData[--pickDataPtr] = bkey1
-        }
-      }
-    }
-
-    lineLOD.push(new LODEntry(
-      level.pixelSize,
-      lineDataPtr>>2,
-      (lineData.length-lineDataPtr)>>2
-    ))
+    lineData[--lineDataPtr] = dy
+    lineData[--lineDataPtr] = dx
+    lineData[--lineDataPtr] = ay
+    lineData[--lineDataPtr] = ax
+    pickData[--pickDataPtr] = akey0
+    pickData[--pickDataPtr] = akey1
   }
 
   this.lineBuffer.update(lineData)
