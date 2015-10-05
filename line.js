@@ -5,7 +5,6 @@ module.exports = createLinePlot
 var createShader = require('gl-shader')
 var createBuffer = require('gl-buffer')
 var pool = require('typedarray-pool')
-var bsearch = require('binary-search-bounds')
 
 var SHADERS = require('./lib/shaders')
 function compareScale(a, b) {
@@ -285,16 +284,22 @@ proto.update = function(options) {
   var data = options.positions
   this.data = data
 
+  var bounds = this.bounds
+  bounds[0] = bounds[1] = Infinity
+  bounds[2] = bounds[3] = -Infinity
+
   var numPoints = this.numPoints = data.length>>>1
   if(numPoints === 0) {
     return
   }
 
-
-  //Compute inverse permutation
-  var invIds    = pool.mallocUint32(numPoints)
   for(var i=0; i<numPoints; ++i) {
-    invIds[outIds[i]] = i
+    var ax = data[2*i]
+    var ay = data[2*i+1]
+    bounds[0] = Math.min(bounds[0], ax)
+    bounds[1] = Math.min(bounds[1], ay)
+    bounds[2] = Math.max(bounds[2], ax)
+    bounds[3] = Math.max(bounds[3], ay)
   }
 
   //Generate line data
@@ -304,16 +309,23 @@ proto.update = function(options) {
   var pickDataPtr = pickData.length
   var ptr = numPoints
 
+
   this.vertCount = 6 * (numPoints - 1)
 
   while(ptr > 1) {
     var id = --ptr
     var ax = data[2*ptr]
     var ay = data[2*ptr+1]
-    
+
+    ax = (ax - bounds[0]) / (bounds[2] - bounds[0])
+    ay = (ay - bounds[1]) / (bounds[3] - bounds[1])
+
     var next = id-1
-    var bx = outData[2*next]
-    var by = outData[2*next+1]
+    var bx = data[2*next]
+    var by = data[2*next+1]
+
+    bx = (bx - bounds[0]) / (bounds[2] - bounds[0])
+    by = (by - bounds[1]) / (bounds[3] - bounds[1])
 
     var dx = bx - ax
     var dy = by - ay
@@ -370,11 +382,11 @@ proto.update = function(options) {
   this.pickBuffer.update(pickData)
 
   pool.free(lineData)
-  pool.free(outData)
-  pool.free(outIds)
+  pool.free(pickData)
 }
 
 proto.dispose = function() {
+  this.plot.removeObject(this)
   this.lineBuffer.dispose()
   this.lineShader.dispose()
 }
@@ -395,6 +407,7 @@ function createLinePlot(plot, options) {
     mitreShader,
     fillShader,
     pickShader)
+  plot.addObject(linePlot)
   linePlot.update(options)
   return linePlot
 }
