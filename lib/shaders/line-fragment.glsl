@@ -9,6 +9,6 @@ varying vec2 direction;
 
 void main() {
   float t = fract(dot(direction, gl_FragCoord.xy) / dashLength);
-  float alpha = texture2D(dashPattern, vec2(t, 0.0)).r;
-  gl_FragColor = color * alpha;
+  vec4 pcolor = color * texture2D(dashPattern, vec2(t, 0.0)).r;
+  gl_FragColor = vec4(pcolor.rgb * pcolor.a, pcolor.a);
 }
