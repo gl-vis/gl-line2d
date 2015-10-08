@@ -4,6 +4,8 @@ module.exports = createLinePlot
 
 var createShader = require('gl-shader')
 var createBuffer = require('gl-buffer')
+var createTexture = require('gl-texture2d')
+var ndarray = require('ndarray')
 var pool = require('typedarray-pool')
 
 var SHADERS = require('./lib/shaders')
@@ -13,6 +15,7 @@ function compareScale(a, b) {
 
 function GLLine2D(
   plot,
+  dashPattern,
   lineBuffer,
   pickBuffer,
   lineShader,
@@ -20,13 +23,15 @@ function GLLine2D(
   fillShader,
   pickShader) {
 
-  this.plot       = plot
-  this.lineBuffer = lineBuffer
-  this.pickBuffer = pickBuffer
-  this.lineShader = lineShader
-  this.mitreShader = mitreShader
-  this.fillShader  = fillShader
-  this.pickShader  = pickShader
+  this.plot         = plot
+  this.dashPattern  = dashPattern
+  this.lineBuffer   = lineBuffer
+  this.pickBuffer   = pickBuffer
+  this.lineShader   = lineShader
+  this.mitreShader  = mitreShader
+  this.fillShader   = fillShader
+  this.pickShader   = pickShader
+  this.usingDashes  = false
 
   this.bounds     = [Infinity, Infinity, -Infinity, -Infinity]
 
@@ -152,6 +157,8 @@ return function() {
   uniforms.color  = color
   uniforms.width  = width * pixelRatio
   uniforms.screenShape = SCREEN_SHAPE
+  uniforms.dashPattern = this.dashPattern.bind()
+  uniforms.dashLength = this.dashLength * pixelRatio
 
   var attributes = shader.attributes
   attributes.a.pointer(gl.FLOAT, false, 16, 0)
@@ -160,7 +167,7 @@ return function() {
   gl.drawArrays(gl.TRIANGLES, 0, count)
 
   //Draw mitres
-  if(width > 2) {
+  if(width > 2 && !this.usingDashes) {
     var mshader = this.mitreShader
     mshader.bind()
 
@@ -281,6 +288,30 @@ proto.update = function(options) {
                      [0,0,0,1],
                      [0,0,0,1]])
 
+  var dashes = options.dashes || [1]
+  var dashLength = 0
+  for(var i=0; i<dashes.length; ++i) {
+    dashLength += dashes[i]
+  }
+  var dashData = pool.mallocUint8(dashLength)
+  var ptr = 0
+  var fillColor = 255
+  for(var i=0; i<dashes.length; ++i) {
+    for(var j=0; j<dashes[i]; ++j) {
+      dashData[ptr++] = fillColor
+    }
+    fillColor ^= 255
+  }
+  this.dashPattern.dispose()
+  this.usingDashes = dashes.length > 1
+
+  this.dashPattern = createTexture(gl,
+    ndarray(dashData, [dashLength, 1, 4], [1, 0, 0]))
+  this.dashPattern.minFilter = gl.NEAREST
+  this.dashPattern.magFilter = gl.NEAREST
+  this.dashLength = dashLength
+  pool.free(dashData)
+
   var data = options.positions
   this.data = data
 
@@ -308,7 +339,6 @@ proto.update = function(options) {
   var lineDataPtr = lineData.length
   var pickDataPtr = pickData.length
   var ptr = numPoints
-
 
   this.vertCount = 6 * (numPoints - 1)
 
@@ -388,19 +418,26 @@ proto.update = function(options) {
 proto.dispose = function() {
   this.plot.removeObject(this)
   this.lineBuffer.dispose()
+  this.pickBuffer.dispose()
   this.lineShader.dispose()
+  this.mitreShader.dispose()
+  this.fillShader.dispose()
+  this.pickShader.dispose()
+  this.dashPattern.dispose()
 }
 
 function createLinePlot(plot, options) {
   var gl = plot.gl
   var lineBuffer  = createBuffer(gl)
   var pickBuffer  = createBuffer(gl)
-  var lineShader  = createShader(gl, SHADERS.lineVertex, SHADERS.lineFragment)
+  var dashPattern = createTexture(gl, [1,1])
+  var lineShader  = createShader(gl, SHADERS.lineVertex,  SHADERS.lineFragment)
   var mitreShader = createShader(gl, SHADERS.mitreVertex, SHADERS.mitreFragment)
-  var fillShader  = createShader(gl, SHADERS.fillVertex, SHADERS.lineFragment)
-  var pickShader  = createShader(gl, SHADERS.pickVertex, SHADERS.pickFragment)
+  var fillShader  = createShader(gl, SHADERS.fillVertex,  SHADERS.fillFragment)
+  var pickShader  = createShader(gl, SHADERS.pickVertex,  SHADERS.pickFragment)
   var linePlot    = new GLLine2D(
     plot,
+    dashPattern,
     lineBuffer,
     pickBuffer,
     lineShader,

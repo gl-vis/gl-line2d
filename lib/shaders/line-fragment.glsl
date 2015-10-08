@@ -1,7 +1,14 @@
 precision mediump float;
 
 uniform vec4 color;
+uniform vec2 screenShape;
+uniform sampler2D dashPattern;
+uniform float dashLength;
+
+varying vec2 direction;
 
 void main() {
-  gl_FragColor = color;
+  float t = fract(dot(direction, gl_FragCoord.xy) / dashLength);
+  float alpha = texture2D(dashPattern, vec2(t, 0.0)).r;
+  gl_FragColor = color * alpha;
 }
