@@ -5,15 +5,21 @@ uniform vec4 pickOffset;
 varying vec4 pickA, pickB;
 
 void main() {
-  vec4 pick = vec4(pickA.xyz, 0);
+  vec4 fragId = vec4(pickA.xyz, 0.0);
   if(pickB.w > pickA.w) {
-    pick.xyz = pickB.xyz;
+    fragId.xyz = pickB.xyz;
   }
 
-  vec4 id = pick + pickOffset;
-  id.y += floor(id.x / 256.0);
-  id.z += floor(id.y / 256.0);
-  id.w += floor(id.z / 256.0);
-  id -= 256.0 * floor(id / 256.0);
-  gl_FragColor = id / 255.0;
+  fragId += pickOffset;
+
+  fragId.y += floor(fragId.x / 256.0);
+  fragId.x -= floor(fragId.x / 256.0) * 256.0;
+
+  fragId.z += floor(fragId.y / 256.0);
+  fragId.y -= floor(fragId.y / 256.0) * 256.0;
+
+  fragId.w += floor(fragId.z / 256.0);
+  fragId.z -= floor(fragId.z / 256.0) * 256.0;
+
+  gl_FragColor = fragId / 255.0;
 }

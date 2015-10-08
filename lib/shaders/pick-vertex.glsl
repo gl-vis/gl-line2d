@@ -13,7 +13,7 @@ varying vec4 pickA, pickB;
 
 void main() {
   vec3 base = matrix * vec3(a, 1);
-  vec2 n = 0.5 * width *
+  vec2 n = width *
     normalize(screenShape.yx * vec2(d.y, -d.x)) / screenShape.xy;
   gl_Position = vec4(base.xy/base.z + n, 0, 1);
   pickA = pick0;

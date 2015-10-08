@@ -9,9 +9,6 @@ var ndarray = require('ndarray')
 var pool = require('typedarray-pool')
 
 var SHADERS = require('./lib/shaders')
-function compareScale(a, b) {
-  return b - a.pixelSize
-}
 
 function GLLine2D(
   plot,
@@ -84,8 +81,6 @@ return function() {
   var dataY   = dataBox[3] - dataBox[1]
   var screenX = viewBox[2] - viewBox[0]
   var screenY = viewBox[3] - viewBox[1]
-
-  var pixelSize   = Math.max(dataX / screenX, dataY / screenY) / pixelRatio
 
   MATRIX[0] = 2.0 * boundX / dataX
   MATRIX[4] = 2.0 * boundY / dataY
@@ -199,20 +194,17 @@ proto.drawPick = (function() {
     var bounds    = this.bounds
     var count     = this.vertCount
 
-
     var gl        = plot.gl
     var viewBox   = plot.viewBox
     var dataBox   = plot.dataBox
-    var pixelRatio = plot.pixelRatio
+    var pixelRatio = plot.pickPixelRatio
 
-    var boundX  = bounds[2] - bounds[0]
-    var boundY  = bounds[3] - bounds[1]
+    var boundX  = bounds[2]  - bounds[0]
+    var boundY  = bounds[3]  - bounds[1]
     var dataX   = dataBox[2] - dataBox[0]
     var dataY   = dataBox[3] - dataBox[1]
     var screenX = viewBox[2] - viewBox[0]
     var screenY = viewBox[3] - viewBox[1]
-
-    var pixelSize   = Math.max(dataX / screenX, dataY / screenY) / pixelRatio
 
     this.pickOffset = pickOffset
 
@@ -249,7 +241,7 @@ proto.drawPick = (function() {
 
     gl.drawArrays(gl.TRIANGLES, 0, count)
 
-    return pickOffset+numPoints
+    return pickOffset + numPoints
   }
 })()
 
@@ -331,6 +323,13 @@ proto.update = function(options) {
     bounds[1] = Math.min(bounds[1], ay)
     bounds[2] = Math.max(bounds[2], ax)
     bounds[3] = Math.max(bounds[3], ay)
+  }
+
+  if(bounds[0] === bounds[2]) {
+    bounds[2] += 1
+  }
+  if(bounds[3] === bounds[1]) {
+    bounds[3] += 1
   }
 
   //Generate line data
