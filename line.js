@@ -70,6 +70,10 @@ return function() {
   var bounds    = this.bounds
   var count     = this.vertCount
 
+  if(!count) {
+    return
+  }
+
   var gl        = plot.gl
   var viewBox   = plot.viewBox
   var dataBox   = plot.dataBox
@@ -207,6 +211,10 @@ proto.drawPick = (function() {
     var screenY = viewBox[3] - viewBox[1]
 
     this.pickOffset = pickOffset
+
+    if(!count) {
+      return pickOffset + numPoints
+    }
 
     MATRIX[0] = 2.0 * boundX / dataX
     MATRIX[4] = 2.0 * boundY / dataY
