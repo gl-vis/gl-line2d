@@ -279,6 +279,8 @@ proto.update = function(options) {
 
   var gl = this.plot.gl
 
+  var connectGaps = !!options.connectGaps
+
   this.color = (options.color || [0,0,1,1]).slice()
   this.width = +(options.width || 1)
 
@@ -327,6 +329,11 @@ proto.update = function(options) {
   for(var i=0; i<numPoints; ++i) {
     var ax = data[2*i]
     var ay = data[2*i+1]
+
+    if (isNaN(ax) || isNaN(ay)) {
+      continue
+    }
+
     bounds[0] = Math.min(bounds[0], ax)
     bounds[1] = Math.min(bounds[1], ay)
     bounds[2] = Math.max(bounds[2], ax)
@@ -347,19 +354,25 @@ proto.update = function(options) {
   var pickDataPtr = pickData.length
   var ptr = numPoints
 
-  this.vertCount = 6 * (numPoints - 1)
+  var count = 0
 
   while(ptr > 1) {
     var id = --ptr
     var ax = data[2*ptr]
     var ay = data[2*ptr+1]
 
-    ax = (ax - bounds[0]) / (bounds[2] - bounds[0])
-    ay = (ay - bounds[1]) / (bounds[3] - bounds[1])
-
     var next = id-1
     var bx = data[2*next]
     var by = data[2*next+1]
+
+    if (isNaN(ax) || isNaN(ay) || isNaN(bx) || isNaN(by)) {
+      continue
+    }
+
+    count += 1
+
+    ax = (ax - bounds[0]) / (bounds[2] - bounds[0])
+    ay = (ay - bounds[1]) / (bounds[3] - bounds[1])
 
     bx = (bx - bounds[0]) / (bounds[2] - bounds[0])
     by = (by - bounds[1]) / (bounds[3] - bounds[1])
@@ -415,8 +428,9 @@ proto.update = function(options) {
     pickData[--pickDataPtr] = akey1
   }
 
-  this.lineBuffer.update(lineData)
-  this.pickBuffer.update(pickData)
+  this.vertCount = 6 * count
+  this.lineBuffer.update(lineData.subarray(lineDataPtr))
+  this.pickBuffer.update(pickData.subarray(pickDataPtr))
 
   pool.free(lineData)
   pool.free(pickData)
