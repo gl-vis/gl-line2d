@@ -1,13 +1,12 @@
 {
   "name": "gl-line2d",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "2D line plots",
   "main": "line.js",
   "dependencies": {
     "gl-buffer": "^2.1.2",
     "gl-shader": "^4.0.5",
     "gl-texture2d": "^2.0.9",
-    "glsl-inverse": "^1.0.0",
     "glslify": "^2.1.2",
     "ndarray": "^1.0.18",
     "snap-points-2d": "^1.0.1",
@@ -25,6 +24,7 @@
     "gl-vis"
   ],
   "author": "Mikola Lysenko",
+  "contributors": ["Étienne Tétreault-Pinard", "Robert Monfera"],
   "license": "MIT",
   "browserify": {
     "transform": [

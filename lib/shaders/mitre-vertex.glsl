@@ -1,13 +1,14 @@
-precision mediump float;
+precision highp float;
 
-attribute vec2 p;
+attribute vec2 aHi, aLo;
 
-uniform mat3  matrix;
-uniform vec2 screenShape;
+uniform vec2 scaleHi, translateHi, scaleLo, translateLo;
 uniform float radius;
 
+#pragma glslify: baseProject = require("./baseProject.glsl")
+
 void main() {
-  vec3 pp = matrix * vec3(p, 1);
-  gl_Position  = vec4(pp.xy, 0, pp.z);
+  vec2 p = baseProject(scaleHi, translateHi, scaleLo, translateLo, aHi, aLo);
+  gl_Position = vec4(p, 0.0, 1.0);
   gl_PointSize = radius;
 }
