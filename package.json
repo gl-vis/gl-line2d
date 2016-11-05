@@ -1,6 +1,6 @@
 {
   "name": "gl-line2d",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "2D line plots",
   "main": "line.js",
   "dependencies": {
