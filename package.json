@@ -12,9 +12,23 @@
     "snap-points-2d": "^1.0.1",
     "typedarray-pool": "^1.1.0"
   },
-  "devDependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gl-vis/gl-line2d.git"
+  },
+  "devDependencies": {
+    "bubleify": "^0.7.0",
+    "canvas-fit": "^1.5.0",
+    "enable-mobile": "^1.0.7",
+    "fps-indicator": "^1.1.0",
+    "gauss-random": "^1.0.1",
+    "gl-plot2d": "^1.2.0",
+    "mouse-change": "^1.4.0",
+    "mouse-wheel": "^1.2.0"
+  },
   "scripts": {
-    "test": "tape test/*.js"
+    "test": "tape test/*.js",
+    "build": "browserify test.js -g bubleify | indexhtmlify | metadataify | github-cornerify > index.html"
   },
   "keywords": [
     "2d",
