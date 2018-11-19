@@ -7,7 +7,7 @@
     "gl-buffer": "^2.1.2",
     "gl-shader": "^4.0.5",
     "gl-texture2d": "^2.0.9",
-    "glslify": "^2.1.2",
+    "glslify": "^6.3.1",
     "ndarray": "^1.0.18",
     "snap-points-2d": "^1.0.1",
     "typedarray-pool": "^1.1.0"
@@ -38,7 +38,10 @@
     "gl-vis"
   ],
   "author": "Mikola Lysenko",
-  "contributors": ["Étienne Tétreault-Pinard", "Robert Monfera"],
+  "contributors": [
+    "Étienne Tétreault-Pinard",
+    "Robert Monfera"
+  ],
   "license": "MIT",
   "browserify": {
     "transform": [
